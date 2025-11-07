@@ -19,7 +19,6 @@ export default function Navigation() {
     { href: "/", icon: Home, label: "Dashboard" },
     { href: "/income", icon: Wallet, label: "Income" },
     { href: "/budget", icon: TrendingUp, label: "Budget" },
-    { href: "/savings", icon: PiggyBank, label: "Savings" },
     { href: "/calendar", icon: Calendar, label: "Calendar" },
   ];
 

@@ -1,23 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 
 interface BudgetCategoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: () => void;
+  categories?: any[]; // For parent category selection
+  editingCategory?: any; // Category being edited
+  selectedParentCategory?: any; // Pre-selected parent for subcategory creation
 }
 
 export default function BudgetCategoryModal({
   isOpen,
   onClose,
   onSave,
+  categories = [],
+  editingCategory = null,
+  selectedParentCategory = null,
 }: BudgetCategoryModalProps) {
   const [name, setName] = useState("");
   const [percentage, setPercentage] = useState("");
   const [color, setColor] = useState("#3b82f6");
+  const [parentId, setParentId] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Initialize form when editing or adding subcategory
+  useEffect(() => {
+    if (editingCategory) {
+      setName(editingCategory.name || "");
+      setPercentage(editingCategory.percentage?.toString() || "");
+      setColor(editingCategory.color || "#3b82f6");
+      setParentId(editingCategory.parentId || "");
+    } else if (selectedParentCategory) {
+      // Adding subcategory - pre-select parent
+      setName("");
+      setPercentage("");
+      setColor("#3b82f6");
+      setParentId(selectedParentCategory.id);
+    } else {
+      // Reset form for new main category
+      setName("");
+      setPercentage("");
+      setColor("#3b82f6");
+      setParentId("");
+    }
+  }, [editingCategory, selectedParentCategory, isOpen]);
 
   if (!isOpen) return null;
 
@@ -26,21 +55,37 @@ export default function BudgetCategoryModal({
     setLoading(true);
 
     try {
-      const response = await fetch("/api/budget-categories", {
-        method: "POST",
+      const url = editingCategory 
+        ? `/api/budget-categories/${editingCategory.id}`
+        : "/api/budget-categories";
+      
+      const method = editingCategory ? "PUT" : "POST";
+      
+      const response = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, percentage, color }),
+        body: JSON.stringify({ name, percentage, color, parentId: parentId || null }),
       });
 
-      if (response.ok) {
-        onSave();
-        onClose();
-        setName("");
-        setPercentage("");
-        setColor("#3b82f6");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
+
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        await response.json(); // Consume the response
+      }
+
+      onSave();
+      onClose();
+      setName("");
+      setPercentage("");
+      setColor("#3b82f6");
+      setParentId("");
     } catch (error) {
       console.error("Error saving category:", error);
+      alert(`Failed to ${editingCategory ? 'update' : 'create'} category. ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -58,11 +103,16 @@ export default function BudgetCategoryModal({
   ];
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-white/20 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">
-            Add Budget Category
+            {editingCategory 
+              ? "Edit Category" 
+              : selectedParentCategory 
+                ? `Add Subcategory to ${selectedParentCategory.name}` 
+                : "Add Budget Category"
+            }
           </h2>
           <button
             onClick={onClose}
@@ -76,6 +126,37 @@ export default function BudgetCategoryModal({
           <div className="space-y-4">
             <div>
               <label
+                htmlFor="parentId"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                Category Type
+              </label>
+              <select
+                id="parentId"
+                value={parentId}
+                onChange={(e) => setParentId(e.target.value)}
+                disabled={selectedParentCategory && !editingCategory}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500"
+              >
+                <option value="">Main Category</option>
+                {categories
+                  .filter(cat => cat.isPredetermined || !cat.parentId)
+                  .map((category) => (
+                    <option key={category.id} value={category.id}>
+                      Subcategory of {category.name}
+                    </option>
+                  ))}
+              </select>
+              <p className="text-sm text-gray-500 mt-1">
+                {selectedParentCategory && !editingCategory 
+                  ? `Creating subcategory under "${selectedParentCategory.name}"`
+                  : "Choose if this is a main category or subcategory"
+                }
+              </p>
+            </div>
+
+            <div>
+              <label
                 htmlFor="name"
                 className="block text-sm font-medium text-gray-700 mb-1"
               >
@@ -87,7 +168,8 @@ export default function BudgetCategoryModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="e.g., Savings, Fun, Buffer"
+                placeholder={parentId ? "e.g., Emergency Fund, Credit Card" : "e.g., Custom Category"}
+                disabled={editingCategory?.isPredetermined}
                 required
               />
             </div>
@@ -167,7 +249,7 @@ export default function BudgetCategoryModal({
               disabled={loading}
               className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Saving..." : "Add Category"}
+              {loading ? "Saving..." : editingCategory ? "Update Category" : "Add Category"}
             </button>
           </div>
         </form>

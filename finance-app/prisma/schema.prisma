@@ -27,10 +27,15 @@ model Income {
 model BudgetCategory {
   id              String            @id @default(cuid())
   name            String
+  slug            String?           @unique // For predetermined categories like "debts", "savings"
   percentage      Float             // Percentage of income allocated
   color           String            @default("#3b82f6")
   icon            String?
   isActive        Boolean           @default(true)
+  isPredetermined Boolean           @default(false) // True for main categories like Debts, Savings
+  parentId        String?           // For subcategories
+  parent          BudgetCategory?   @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  subcategories   BudgetCategory[]  @relation("CategoryHierarchy")
   order           Int               @default(0)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt

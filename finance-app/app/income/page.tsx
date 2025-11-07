@@ -8,7 +8,7 @@ import {
   Calendar as CalendarIcon,
 } from "lucide-react";
 import IncomeModal from "@/components/IncomeModal";
-import { Income } from "@/lib/types";
+import { Income, CacheUtils, CACHE_KEYS, CACHE_TTL } from "@/lib/types";
 
 export default function IncomePage() {
   const [incomes, setIncomes] = useState<Income[]>([]);
@@ -19,13 +19,51 @@ export default function IncomePage() {
     fetchIncomes();
   }, []);
 
-  const fetchIncomes = async () => {
+  const fetchIncomes = async (forceRefresh: boolean = false) => {
+    try {
+      // Try to get cached data first
+      if (!forceRefresh) {
+        const cachedIncomes = CacheUtils.get<Income[]>(CACHE_KEYS.INCOME);
+        if (cachedIncomes) {
+          setIncomes(cachedIncomes);
+          setLoading(false);
+          
+          // Fetch fresh data in background
+          fetchFreshIncomes();
+          return;
+        }
+      }
+
+      // If no cache or force refresh, fetch fresh data
+      await fetchFreshIncomes();
+    } catch (error) {
+      console.error("Error in fetchIncomes:", error);
+      setLoading(false);
+    }
+  };
+
+  const fetchFreshIncomes = async () => {
     try {
       const response = await fetch("/api/income");
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Response is not JSON");
+      }
+      
       const data = await response.json();
-      setIncomes(data);
+      
+      // Cache the fresh data
+      CacheUtils.set(CACHE_KEYS.INCOME, data, CACHE_TTL.MEDIUM);
+      
+      setIncomes(data || []);
     } catch (error) {
       console.error("Error fetching incomes:", error);
+      setIncomes([]);
     } finally {
       setLoading(false);
     }
@@ -55,8 +93,13 @@ export default function IncomePage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-xl">Loading...</div>
+      <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center animate-pulse">
+            <Wallet className="w-6 h-6 text-white" />
+          </div>
+          <div className="text-xl font-medium text-gray-700 animate-pulse">Loading Income...</div>
+        </div>
       </div>
     );
   }
@@ -254,7 +297,12 @@ export default function IncomePage() {
       <IncomeModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        onSave={fetchIncomes}
+        onSave={() => {
+          // Clear cache and refresh
+          CacheUtils.clear(CACHE_KEYS.INCOME);
+          CacheUtils.clear(CACHE_KEYS.DASHBOARD);
+          fetchIncomes(true);
+        }}
       />
     </div>
   );

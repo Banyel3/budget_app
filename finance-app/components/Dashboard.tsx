@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DashboardData } from "@/lib/types";
+import { DashboardData, CacheUtils, CACHE_KEYS, CACHE_TTL } from "@/lib/types";
 import {
   Wallet,
   PiggyBank,
@@ -28,13 +28,67 @@ export default function Dashboard() {
     fetchDashboard();
   }, []);
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = async (forceRefresh: boolean = false) => {
+    try {
+      // Try to get cached data first
+      if (!forceRefresh) {
+        const cachedData = CacheUtils.get<DashboardData>(CACHE_KEYS.DASHBOARD);
+        if (cachedData) {
+          setData(cachedData);
+          setLoading(false);
+          
+          // Fetch fresh data in background and update cache
+          fetchFreshData();
+          return;
+        }
+      }
+
+      // If no cache or force refresh, fetch fresh data
+      await fetchFreshData();
+    } catch (error) {
+      console.error("Error in fetchDashboard:", error);
+      setLoading(false);
+    }
+  };
+
+  const fetchFreshData = async () => {
     try {
       const response = await fetch("/api/dashboard");
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Response is not JSON");
+      }
+      
       const result = await response.json();
+      
+      // Cache the fresh data
+      CacheUtils.set(CACHE_KEYS.DASHBOARD, result, CACHE_TTL.MEDIUM);
+      
       setData(result);
     } catch (error) {
       console.error("Error fetching dashboard:", error);
+      // Set some default data to prevent UI crashes
+      const defaultData = {
+        income: null,
+        dailyIncome: 0,
+        categories: [],
+        totalBudgetPercentage: 0,
+        savingsGoals: [],
+        totalSavings: 0,
+        totalSavingsTarget: 0,
+        savingsProgress: 0,
+        debts: [],
+        totalDebt: 0,
+        completedGoals: 0,
+        activeGoals: 0,
+        activeDebts: 0,
+      };
+      setData(defaultData);
     } finally {
       setLoading(false);
     }
@@ -49,8 +103,13 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-xl">Loading...</div>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center animate-pulse">
+            <Wallet className="w-6 h-6 text-white" />
+          </div>
+          <div className="text-xl font-medium text-gray-700 animate-pulse">Loading Dashboard...</div>
+        </div>
       </div>
     );
   }
@@ -347,7 +406,10 @@ export default function Dashboard() {
           <CreditCard className="w-8 h-8 text-red-600" />
           <span className="text-sm font-medium text-gray-700">Add Debt</span>
         </button>
-        <button className="bg-white rounded-xl p-4 shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-2">
+        <button 
+          onClick={() => window.location.href = '/calendar'}
+          className="bg-white rounded-xl p-4 shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-2"
+        >
           <Calendar className="w-8 h-8 text-purple-600" />
           <span className="text-sm font-medium text-gray-700">
             View Calendar
@@ -359,22 +421,43 @@ export default function Dashboard() {
       <IncomeModal
         isOpen={incomeModalOpen}
         onClose={() => setIncomeModalOpen(false)}
-        onSave={fetchDashboard}
+        onSave={() => {
+          // Clear cache and force refresh when data changes
+          CacheUtils.clear(CACHE_KEYS.DASHBOARD);
+          CacheUtils.clear(CACHE_KEYS.INCOME);
+          fetchDashboard(true);
+        }}
       />
       <SavingsGoalModal
         isOpen={goalModalOpen}
         onClose={() => setGoalModalOpen(false)}
-        onSave={fetchDashboard}
+        onSave={() => {
+          // Clear cache and force refresh when data changes
+          CacheUtils.clear(CACHE_KEYS.DASHBOARD);
+          CacheUtils.clear(CACHE_KEYS.SAVINGS_GOALS);
+          fetchDashboard(true);
+        }}
       />
       <DebtModal
         isOpen={debtModalOpen}
         onClose={() => setDebtModalOpen(false)}
-        onSave={fetchDashboard}
+        onSave={() => {
+          // Clear cache and force refresh when data changes
+          CacheUtils.clear(CACHE_KEYS.DASHBOARD);
+          CacheUtils.clear(CACHE_KEYS.DEBTS);
+          fetchDashboard(true);
+        }}
       />
       <BudgetCategoryModal
         isOpen={categoryModalOpen}
         onClose={() => setCategoryModalOpen(false)}
-        onSave={fetchDashboard}
+        onSave={() => {
+          // Clear cache and force refresh when data changes
+          CacheUtils.clear(CACHE_KEYS.DASHBOARD);
+          CacheUtils.clear(CACHE_KEYS.CATEGORIES);
+          fetchDashboard(true);
+        }}
+        categories={data?.categories || []}
       />
     </div>
   );

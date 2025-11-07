@@ -10,7 +10,7 @@ import {
   Filter,
   Plus,
 } from "lucide-react";
-import { BudgetCategory } from "@/lib/types";
+import { BudgetCategory, CacheUtils, CACHE_KEYS, CACHE_TTL } from "@/lib/types";
 
 interface DayPayment {
   date: string;
@@ -50,18 +50,70 @@ export default function CalendarPage() {
     generateCalendar();
   }, [currentDate, payments, selectedCategory]);
 
-  const fetchData = async () => {
+  const fetchData = async (forceRefresh: boolean = false) => {
+    try {
+      // Try to get cached data first
+      if (!forceRefresh) {
+        const cachedCategories = CacheUtils.get<BudgetCategory[]>(CACHE_KEYS.CATEGORIES);
+        const cachedDashboard = CacheUtils.get<any>(CACHE_KEYS.DASHBOARD);
+        
+        if (cachedCategories && cachedDashboard) {
+          setCategories(cachedCategories);
+          setDailyIncome(cachedDashboard.dailyIncome || 0);
+          setLoading(false);
+          
+          // Fetch fresh data in background
+          fetchFreshData();
+          return;
+        }
+      }
+
+      // If no cache or force refresh, fetch fresh data
+      await fetchFreshData();
+    } catch (error) {
+      console.error("Error in fetchData:", error);
+      setLoading(false);
+    }
+  };
+
+  const fetchFreshData = async () => {
     try {
       const [categoriesRes, dashboardRes] = await Promise.all([
         fetch("/api/budget-categories"),
         fetch("/api/dashboard"),
       ]);
+
+      // Check categories response
+      if (!categoriesRes.ok) {
+        throw new Error(`Categories API error! status: ${categoriesRes.status}`);
+      }
+      const categoriesContentType = categoriesRes.headers.get("content-type");
+      if (!categoriesContentType || !categoriesContentType.includes("application/json")) {
+        throw new Error("Categories response is not JSON");
+      }
+
+      // Check dashboard response
+      if (!dashboardRes.ok) {
+        throw new Error(`Dashboard API error! status: ${dashboardRes.status}`);
+      }
+      const dashboardContentType = dashboardRes.headers.get("content-type");
+      if (!dashboardContentType || !dashboardContentType.includes("application/json")) {
+        throw new Error("Dashboard response is not JSON");
+      }
+
       const categoriesData = await categoriesRes.json();
       const dashboardData = await dashboardRes.json();
-      setCategories(categoriesData);
+      
+      // Cache the fresh data
+      CacheUtils.set(CACHE_KEYS.CATEGORIES, categoriesData, CACHE_TTL.MEDIUM);
+      CacheUtils.set(CACHE_KEYS.DASHBOARD, dashboardData, CACHE_TTL.MEDIUM);
+      
+      setCategories(categoriesData || []);
       setDailyIncome(dashboardData.dailyIncome || 0);
     } catch (error) {
       console.error("Error fetching data:", error);
+      setCategories([]);
+      setDailyIncome(0);
     } finally {
       setLoading(false);
     }
@@ -147,8 +199,40 @@ export default function CalendarPage() {
   };
 
   const handleDateClick = (date: Date) => {
+    const dateKey = date.toDateString();
+    const dayPayments = payments.get(dateKey) || [];
+    
+    // Filter payments by selected category if not "all"
+    const filteredPayments = selectedCategory === "all" 
+      ? dayPayments 
+      : dayPayments.filter((p) => p.categoryId === selectedCategory);
+    
     setSelectedDate(date);
-    setShowCategorySelect(true);
+    
+    // If there are existing payments for this date (considering the filter), show edit options
+    if (filteredPayments.length > 0) {
+      // If only one payment for the filtered category, edit it directly
+      if (filteredPayments.length === 1) {
+        const paymentIndex = dayPayments.indexOf(filteredPayments[0]);
+        setEditPaymentIndex(paymentIndex);
+        setEditAmount(filteredPayments[0].amount.toString());
+      } else {
+        // Multiple payments - show selection modal for which one to edit
+        setShowCategorySelect(true);
+      }
+    } else {
+      // No existing payments for this category/date
+      if (selectedCategory === "all") {
+        // Show category selection when "all" is selected
+        setShowCategorySelect(true);
+      } else {
+        // Auto-add payment for the selected category
+        const selectedCategoryData = categories.find(cat => cat.id === selectedCategory);
+        if (selectedCategoryData) {
+          handleAddPayment(selectedCategoryData);
+        }
+      }
+    }
   };
 
   const handleAddPayment = (category: BudgetCategory) => {
@@ -290,8 +374,13 @@ export default function CalendarPage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-xl">Loading...</div>
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center animate-pulse">
+            <CalendarIcon className="w-6 h-6 text-white" />
+          </div>
+          <div className="text-xl font-medium text-gray-700 animate-pulse">Loading Calendar...</div>
+        </div>
       </div>
     );
   }
@@ -416,77 +505,66 @@ export default function CalendarPage() {
           {calendarDays.map((dayData, index) => {
             const isCurrentDay = isToday(dayData.date);
             const hasPayments = dayData.payments.length > 0;
-            const totalForDay = dayData.payments.reduce(
-              (sum, p) => sum + p.amount,
-              0
-            );
+            const totalForDay = dayData.payments.reduce((sum, p) => sum + p.amount, 0);
+            
+            const handleDayClick = () => {
+              if (dayData.isCurrentMonth) {
+                handleDateClick(dayData.date);
+              }
+            };
+
+            let dayClasses = "aspect-square p-2 rounded-xl transition-all relative min-h-[80px] cursor-pointer";
+            if (!dayData.isCurrentMonth) {
+              dayClasses += " opacity-20 pointer-events-none";
+            }
+            if (isCurrentDay) {
+              dayClasses += " ring-2 ring-indigo-500";
+            }
+            if (hasPayments) {
+              dayClasses += " bg-green-50 border-2 border-green-300";
+            } else {
+              dayClasses += " border-2 border-gray-200 hover:border-indigo-300 hover:bg-indigo-50";
+            }
+
+            let spanClasses = "text-sm font-semibold";
+            if (isCurrentDay) {
+              spanClasses += " text-indigo-700";
+            } else if (hasPayments) {
+              spanClasses += " text-green-700";
+            } else {
+              spanClasses += " text-gray-700";
+            }
 
             return (
-              <button
+              <div
                 key={index}
-                onClick={() =>
-                  dayData.isCurrentMonth && handleDateClick(dayData.date)
-                }
-                disabled={!dayData.isCurrentMonth}
-                className={`
-                  aspect-square p-2 rounded-xl transition-all relative min-h-[80px]
-                  ${
-                    !dayData.isCurrentMonth
-                      ? "opacity-20 cursor-not-allowed"
-                      : "cursor-pointer"
-                  }
-                  ${isCurrentDay ? "ring-2 ring-indigo-500" : ""}
-                  ${
-                    hasPayments
-                      ? "bg-green-50 border-2 border-green-300"
-                      : "border-2 border-gray-200 hover:border-indigo-300 hover:bg-indigo-50"
-                  }
-                `}
+                onClick={handleDayClick}
+                className={dayClasses}
               >
                 <div className="flex flex-col h-full">
-                  <span
-                    className={`text-sm font-semibold ${
-                      isCurrentDay
-                        ? "text-indigo-700"
-                        : hasPayments
-                        ? "text-green-700"
-                        : "text-gray-700"
-                    }`}
-                  >
+                  <span className={spanClasses}>
                     {dayData.date.getDate()}
                   </span>
 
-                  {/* Payment Indicators */}
                   {hasPayments && (
                     <div className="flex-1 flex flex-col justify-center items-center gap-1 mt-1">
                       <div className="flex flex-wrap gap-1 justify-center">
                         {dayData.payments.map((payment, idx) => (
-                          <button
+                          <div
                             key={idx}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEditPayment(
-                                dayData.date,
-                                payments
-                                  .get(dayData.date.toDateString())
-                                  ?.indexOf(payment) || 0
-                              );
-                            }}
-                            className="w-3 h-3 rounded-full border border-white"
+                            className="w-3 h-3 rounded-full border border-white cursor-pointer hover:scale-110 transition-transform"
                             style={{ backgroundColor: payment.color }}
-                            title={`${payment.categoryName}: ${formatCurrency(
-                              payment.amount
-                            )}`}
+                            title={`${payment.categoryName}: ${formatCurrency(payment.amount)}`}
                           />
                         ))}
                       </div>
                       <span className="text-xs font-semibold text-green-700">
-                        {formatCurrency(totalForDay).replace("₱", "₱")}
+                        {formatCurrency(totalForDay)}
                       </span>
                     </div>
                   )}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -508,19 +586,26 @@ export default function CalendarPage() {
             </div>
           </div>
           <p className="text-xs text-gray-600 mt-4">
-            💡 Click any date to add a payment. Click colored dots to edit the
-            payment amount.
+            💡 When "All Categories" is selected: Click dates to choose category. 
+            When specific category is selected: Click dates to instantly add/edit payments for that category.
           </p>
         </div>
       </div>
 
       {/* Category Select Modal */}
       {showCategorySelect && selectedDate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-white/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-bold text-gray-900">
-                Select Category
+                {(() => {
+                  const dateKey = selectedDate.toDateString();
+                  const dayPayments = payments.get(dateKey) || [];
+                  const filteredPayments = selectedCategory === "all" 
+                    ? dayPayments 
+                    : dayPayments.filter((p) => p.categoryId === selectedCategory);
+                  return filteredPayments.length > 0 ? "Select Payment to Edit" : "Select Category";
+                })()}
               </h3>
               <button
                 onClick={() => {
@@ -543,44 +628,107 @@ export default function CalendarPage() {
             </p>
 
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {categories.map((category) => {
-                const amount = (dailyIncome * category.percentage) / 100;
-                return (
-                  <button
-                    key={category.id}
-                    onClick={() => handleAddPayment(category)}
-                    className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-indigo-500 transition-all text-left"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-10 h-10 rounded-lg flex items-center justify-center"
-                          style={{ backgroundColor: `${category.color}20` }}
-                        >
+              {selectedDate && (() => {
+                const dateKey = selectedDate.toDateString();
+                const dayPayments = payments.get(dateKey) || [];
+                const filteredPayments = selectedCategory === "all" 
+                  ? dayPayments 
+                  : dayPayments.filter((p) => p.categoryId === selectedCategory);
+
+                // If there are existing payments, show them for editing
+                if (filteredPayments.length > 0) {
+                  return (
+                    <>
+                      {filteredPayments.map((payment, idx) => {
+                        const paymentIndex = dayPayments.indexOf(payment);
+                        return (
                           <div
-                            className="w-4 h-4 rounded-full"
-                            style={{ backgroundColor: category.color }}
-                          />
+                            key={`${payment.categoryId}-${idx}`}
+                            onClick={() => {
+                              setEditPaymentIndex(paymentIndex);
+                              setEditAmount(payment.amount.toString());
+                              setShowCategorySelect(false);
+                            }}
+                            className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-indigo-500 transition-all text-left cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                                  style={{ backgroundColor: `${payment.color}20` }}
+                                >
+                                  <div
+                                    className="w-4 h-4 rounded-full"
+                                    style={{ backgroundColor: payment.color }}
+                                  />
+                                </div>
+                                <div>
+                                  <h4 className="font-semibold text-gray-900">
+                                    {payment.categoryName}
+                                  </h4>
+                                  <p className="text-sm text-gray-600">
+                                    Current payment
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-bold text-gray-900">
+                                  {formatCurrency(payment.amount)}
+                                </p>
+                                <p className="text-xs text-gray-500">click to edit</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                }
+
+                // No existing payments, show categories for adding new payments
+                return (
+                  <>
+                    {categories.map((category) => {
+                      const amount = (dailyIncome * category.percentage) / 100;
+                      return (
+                        <div
+                          key={category.id}
+                          onClick={() => handleAddPayment(category)}
+                          className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-indigo-500 transition-all text-left cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                                style={{ backgroundColor: `${category.color}20` }}
+                              >
+                                <div
+                                  className="w-4 h-4 rounded-full"
+                                  style={{ backgroundColor: category.color }}
+                                />
+                              </div>
+                              <div>
+                                <h4 className="font-semibold text-gray-900">
+                                  {category.name}
+                                </h4>
+                                <p className="text-sm text-gray-600">
+                                  {category.percentage}% of income
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-gray-900">
+                                {formatCurrency(amount)}
+                              </p>
+                              <p className="text-xs text-gray-500">suggested</p>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="font-semibold text-gray-900">
-                            {category.name}
-                          </h4>
-                          <p className="text-sm text-gray-600">
-                            {category.percentage}% of income
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-gray-900">
-                          {formatCurrency(amount)}
-                        </p>
-                        <p className="text-xs text-gray-500">suggested</p>
-                      </div>
-                    </div>
-                  </button>
+                      );
+                    })}
+                  </>
                 );
-              })}
+              })()}
             </div>
           </div>
         </div>
@@ -588,7 +736,7 @@ export default function CalendarPage() {
 
       {/* Edit Payment Modal */}
       {selectedDate && editPaymentIndex !== null && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-white/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-bold text-gray-900">Edit Payment</h3>
@@ -632,12 +780,22 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <button
                 onClick={handleDeletePayment}
                 className="flex-1 py-3 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium"
               >
-                Remove Payment
+                Delete
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedDate(null);
+                  setEditPaymentIndex(null);
+                  setEditAmount("");
+                }}
+                className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+              >
+                Exit
               </button>
               <button
                 onClick={handleSaveEdit}

@@ -40,17 +40,25 @@ export default function SavingsGoalModal({
         }),
       });
 
-      if (response.ok) {
-        onSave();
-        onClose();
-        setName("");
-        setTargetAmount("");
-        setDescription("");
-        setTargetDate("");
-        setColor("#10b981");
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        await response.json(); // Consume the response
+      }
+
+      onSave();
+      onClose();
+      setName("");
+      setTargetAmount("");
+      setDescription("");
+      setTargetDate("");
+      setColor("#10b981");
     } catch (error) {
       console.error("Error saving goal:", error);
+      alert("Failed to save goal. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -66,7 +74,7 @@ export default function SavingsGoalModal({
   ];
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-white/20 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Add Savings Goal</h2>
