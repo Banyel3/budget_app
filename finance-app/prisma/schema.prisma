@@ -1,0 +1,173 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // uncomment next line if you use Prisma <5.10
+  // directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model Income {
+  id        String   @id @default(cuid())
+  amount    Float
+  frequency String   // "daily", "weekly", "monthly"
+  isActive  Boolean  @default(true)
+  startDate DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("incomes")
+}
+
+model BudgetCategory {
+  id              String            @id @default(cuid())
+  name            String
+  percentage      Float             // Percentage of income allocated
+  color           String            @default("#3b82f6")
+  icon            String?
+  isActive        Boolean           @default(true)
+  order           Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  allocations     BudgetAllocation[]
+  transactions    Transaction[]
+
+  @@map("budget_categories")
+}
+
+model BudgetAllocation {
+  id               String         @id @default(cuid())
+  categoryId       String
+  category         BudgetCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  amount           Float
+  period           String         // "daily", "weekly", "monthly"
+  date             DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("budget_allocations")
+}
+
+model SavingsGoal {
+  id               String         @id @default(cuid())
+  name             String
+  targetAmount     Float
+  currentAmount    Float          @default(0)
+  description      String?
+  targetDate       DateTime?
+  color            String         @default("#10b981")
+  icon             String?
+  isCompleted      Boolean        @default(false)
+  isActive         Boolean        @default(true)
+  order            Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  contributions    SavingsContribution[]
+  transactions     Transaction[]
+
+  @@map("savings_goals")
+}
+
+model SavingsContribution {
+  id               String       @id @default(cuid())
+  goalId           String
+  goal             SavingsGoal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  amount           Float
+  date             DateTime     @default(now())
+  note             String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("savings_contributions")
+}
+
+model Debt {
+  id               String         @id @default(cuid())
+  name             String
+  principalAmount  Float
+  currentBalance   Float
+  interestRate     Float          @default(0)
+  repaymentAmount  Float          // Daily/weekly repayment
+  repaymentFrequency String       // "daily", "weekly", "monthly"
+  startDate        DateTime       @default(now())
+  dueDate          DateTime?
+  isPaid           Boolean        @default(false)
+  isActive         Boolean        @default(true)
+  creditor         String?
+  description      String?
+  color            String         @default("#ef4444")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  repayments       DebtRepayment[]
+  transactions     Transaction[]
+
+  @@map("debts")
+}
+
+model DebtRepayment {
+  id               String       @id @default(cuid())
+  debtId           String
+  debt             Debt         @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount           Float
+  date             DateTime     @default(now())
+  note             String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("debt_repayments")
+}
+
+model Transaction {
+  id               String          @id @default(cuid())
+  type             String          // "income", "expense", "savings", "debt_repayment", "transfer"
+  amount           Float
+  description      String?
+  date             DateTime        @default(now())
+  categoryId       String?
+  category         BudgetCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  savingsGoalId    String?
+  savingsGoal      SavingsGoal?    @relation(fields: [savingsGoalId], references: [id], onDelete: SetNull)
+  debtId           String?
+  debt             Debt?           @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  isRecurring      Boolean         @default(false)
+  recurringFrequency String?       // "daily", "weekly", "monthly"
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@map("transactions")
+}
+
+model CalendarEntry {
+  id               String       @id @default(cuid())
+  date             DateTime
+  type             String       // "contribution", "repayment", "income", "expense"
+  amount           Float
+  description      String?
+  relatedId        String?      // ID of related goal, debt, etc.
+  isCompleted      Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("calendar_entries")
+  @@index([date])
+}
+
+model Notification {
+  id               String       @id @default(cuid())
+  title            String
+  message          String
+  type             String       // "reminder", "alert", "success", "info"
+  isRead           Boolean      @default(false)
+  actionUrl        String?
+  relatedId        String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("notifications")
+  @@index([isRead, createdAt])
+}
